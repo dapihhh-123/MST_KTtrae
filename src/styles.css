@@ -467,6 +467,13 @@ button, input, textarea{ font: inherit; }
   padding: 6px 10px;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,.15);
+  background: rgba(0,0,0,.35);
+  color: #f0f3ff;
+  font-size: 12px;
+  box-shadow: var(--shadow);
+  white-space: nowrap;
+}
+
 .breakoutSummaryWidget{
   position: absolute;
   max-width: 480px;
@@ -487,11 +494,4 @@ button, input, textarea{ font: inherit; }
 .breakoutSummaryBody{
   font-size: 13px;
   line-height: 1.45;
-}
-  border: 1px solid rgba(255,255,255,.15);
-  background: rgba(0,0,0,.35);
-  color: #f0f3ff;
-  font-size: 12px;
-  box-shadow: var(--shadow);
-  white-space: nowrap;
 }

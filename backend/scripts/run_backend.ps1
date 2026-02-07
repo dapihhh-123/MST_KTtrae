@@ -9,4 +9,4 @@ $env:PYTHONPATH = "$PWD"
 
 Write-Host "Starting Backend..."
 # Run uvicorn with reload for development
-python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8001

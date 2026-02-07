@@ -1,0 +1,143 @@
+.oraclePanel {
+  position: fixed;
+  top: 60px;
+  right: 20px;
+  width: 500px;
+  height: 80vh;
+  background: #1e1e1e;
+  border: 1px solid #444;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  z-index: 9999;
+  border-radius: 6px;
+  font-family: 'Segoe UI', sans-serif;
+  color: #ccc;
+}
+
+.oracleHeader {
+  background: #2d2d2d;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #333;
+  cursor: grab;
+}
+
+.oracleHeader:active {
+  cursor: grabbing;
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+.closeBtn:hover { color: #fff; }
+
+.oracleBody {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.oracleNav {
+  width: 60px;
+  background: #252526;
+  border-right: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+}
+
+.oracleNav button {
+  background: none;
+  border: none;
+  color: #888;
+  padding: 12px 4px;
+  text-align: center;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+
+.oracleNav button:hover {
+  background: #2a2d2e;
+  color: #ddd;
+}
+
+.oracleNav button.active {
+  color: #fff;
+  border-left-color: #007acc;
+  background: #1e1e1e;
+}
+
+.oracleContent {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+  background: #1e1e1e;
+}
+
+/* Common form styles */
+.oracleFormGroup {
+  margin-bottom: 16px;
+}
+.oracleFormGroup label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+  color: #aaa;
+}
+.oracleInput, .oracleTextarea, .oracleSelect {
+  width: 100%;
+  background: #3c3c3c;
+  border: 1px solid #3c3c3c;
+  color: #fff;
+  padding: 6px 8px;
+  border-radius: 2px;
+  font-family: inherit;
+}
+.oracleInput:focus, .oracleTextarea:focus {
+  outline: none;
+  border-color: #007acc;
+}
+.oracleTextarea { min-height: 80px; resize: vertical; }
+
+.oracleBtn {
+  background: #0e639c;
+  color: #fff;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.oracleBtn:disabled {
+  background: #444;
+  color: #888;
+  cursor: not-allowed;
+}
+.oracleBtn.secondary {
+  background: #3c3c3c;
+}
+
+.sectionTitle {
+  margin-top: 0;
+  margin-bottom: 16px;
+  font-size: 1rem;
+  font-weight: 500;
+  color: #fff;
+  border-bottom: 1px solid #333;
+  padding-bottom: 8px;
+}
+
+.card {
+  background: #252526;
+  border: 1px solid #333;
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+}

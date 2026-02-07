@@ -1,0 +1,25 @@
+{
+  "goal_one_liner": "Determine if any courses overlap in their scheduled times.",
+  "deliverable": "function",
+  "language": "python",
+  "runtime": "python",
+  "signature": {
+    "function_name": "solve",
+    "args": ["courses"],
+    "returns": "bool"
+  },
+  "constraints": [],
+  "assumptions": ["Time is integer"],
+  "output_ops": [],
+  "output_shape": {"type": "boolean"},
+  "ambiguities": [
+    {
+      "ambiguity_id": "time_format",
+      "question": "What format are the start and end times provided in?",
+      "choices": [
+        {"choice_id": "24-hour format", "text": "24-hour format"},
+        {"choice_id": "AM/PM format", "text": "AM/PM format"}
+      ]
+    }
+  ]
+}

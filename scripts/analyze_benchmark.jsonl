@@ -1,0 +1,11 @@
+
+{"id": "BM001", "category": "ops_sequence", "description": "Implement a simple cache system with set(key, value) and get(key). If key missing in get, return -1. Support 'clear' operation to remove all entries.", "expected_model": "stateful_ops"}
+{"id": "BM002", "category": "cli", "description": "Read lines from stdin. Each line is a number. Output the sum of all numbers.", "expected_model": "cli_stdio"}
+{"id": "BM003", "category": "data_processing", "description": "Write a function parse_csv(text) that returns a list of dictionaries. Assume first line is header.", "expected_model": "function_single"}
+{"id": "BM004", "category": "mixed_language", "description": "实现一个计算器 (Calculator). 支持 add, sub, mul. 输入是 operations list. 输出结果 list. Handle division by zero by returning null.", "expected_model": "stateful_ops"}
+{"id": "BM005", "category": "underspecified", "description": "Process the list of users.", "expected_model": "needs_clarification"}
+{"id": "BM006", "category": "ops_sequence", "description": "Ticket system. create_ticket(title) -> id. close_ticket(id). list_tickets() -> list of open tickets. IDs should be auto-incrementing integers starting at 1.", "expected_model": "stateful_ops"}
+{"id": "BM007", "category": "function_single", "description": "Function is_prime(n). Returns boolean. n is integer.", "expected_model": "function_single"}
+{"id": "BM008", "category": "cli", "description": "CLI tool that takes a filename as argument and prints its size in bytes. (Note: this is arg based, not stdin, but fits CLI)", "expected_model": "cli_stdio"}
+{"id": "BM009", "category": "data_processing", "description": "Flatten a nested list of integers. e.g. [[1,2], [3]] -> [1,2,3].", "expected_model": "function_single"}
+{"id": "BM010", "category": "mixed_language", "description": "Extract emails from text. 提取文本中的所有邮箱地址。Return list of strings.", "expected_model": "function_single"}

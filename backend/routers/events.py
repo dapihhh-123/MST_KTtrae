@@ -10,6 +10,7 @@ from backend.services.websocket_service import manager
 from backend.services.telemetry import telemetry_service
 from backend.services.diagnosis_pipeline import DiagnosisPipeline
 from backend.services.observation_logger import observation_logger, ObservationEventContext
+from backend.services.edu_spd.engine import edu_spd_engine
 from typing import List, Dict, Any
 import logging
 import hashlib
@@ -17,6 +18,72 @@ import traceback
 
 logger = logging.getLogger("Backend")
 router = APIRouter()
+
+_agent_emit_state: Dict[str, Dict[str, Any]] = {}
+
+
+def _primary_reason(reason_codes: Any) -> str:
+    if not isinstance(reason_codes, list):
+        return "NO_REASON"
+    preferred = (
+        "STALLING_TRIGGERED",
+        "FLAILING_TRIGGERED",
+        "IDLE_TOO_LONG",
+        "SAME_ERROR_REPEAT",
+        "STRUGGLE_FLAG",
+    )
+    s = {x for x in reason_codes if isinstance(x, str)}
+    for k in preferred:
+        if k in s:
+            return k
+    for x in reason_codes:
+        if isinstance(x, str) and x:
+            return x
+    return "NO_REASON"
+
+
+def _should_emit_agent_message(*, session_id: str, edu: Dict[str, Any]) -> bool:
+    now = float(utils.now())
+    cur_need = bool(edu.get("need_intervene"))
+    cur_state = str(edu.get("state") or "")
+    cur_reasons = {x for x in (edu.get("reason_codes") or []) if isinstance(x, str)}
+    cur_last_run_id = int(edu.get("last_run_id") or 0)
+    cur_update_source = str(edu.get("update_source") or "")
+
+    prev = _agent_emit_state.get(session_id) or {}
+    prev_need = bool(prev.get("need_intervene"))
+    prev_state = str(prev.get("state") or "")
+    prev_reasons = set(prev.get("reason_codes") or [])
+
+    if not cur_need:
+        return False
+
+    transition = (not prev_need and cur_need) or (prev_state and prev_state != cur_state) or bool(cur_reasons - prev_reasons)
+    if not transition:
+        return False
+
+    if cur_update_source == "HEARTBEAT" and not ((not prev_need and cur_need) or (prev_state and prev_state != cur_state)):
+        return False
+
+    dedup_key = f"{session_id}|{cur_state}|{_primary_reason(list(cur_reasons))}|{cur_last_run_id}"
+    last_emit_ts = float(prev.get("last_emit_ts") or 0.0)
+    last_dedup_key = str(prev.get("dedup_key") or "")
+    if last_dedup_key == dedup_key and last_emit_ts > 0 and now - last_emit_ts < 120.0:
+        return False
+    return True
+
+
+def _mark_agent_emitted(*, session_id: str, edu: Dict[str, Any]) -> None:
+    now = float(utils.now())
+    reasons = [x for x in (edu.get("reason_codes") or []) if isinstance(x, str)]
+    _agent_emit_state[session_id] = {
+        "last_emit_ts": now,
+        "dedup_key": f"{session_id}|{str(edu.get('state') or '')}|{_primary_reason(reasons)}|{int(edu.get('last_run_id') or 0)}",
+        "need_intervene": bool(edu.get("need_intervene")),
+        "state": str(edu.get("state") or ""),
+        "reason_codes": reasons,
+    }
+
 
 # --- Code State API (3.1-C) ---
 @router.post("/code_states", response_model=Dict[str, str])
@@ -175,8 +242,20 @@ async def run_mechanism_pipeline(session_id: str, event: models.EventLog, db: Se
         "trace_id": trace_id
     })
 
+    edu = edu_spd_engine.peek_status(session_id, debug=False)
+    allow_proactive = bool(edu.get("need_intervene"))
+    if event.type in {"unlock_attempt", "recap_response"}:
+        allow_proactive = True
+
+    if not allow_proactive:
+        return
+
     if not plan.interrupt:
         return
+
+    if event.type not in {"unlock_attempt", "recap_response"}:
+        if not _should_emit_agent_message(session_id=session_id, edu=edu):
+            return
 
     chat_service = ChatService(db)
     target_tid = (event.payload or {}).get("breakout_thread_id")
@@ -200,6 +279,8 @@ async def run_mechanism_pipeline(session_id: str, event: models.EventLog, db: Se
 
     full_content = ""
     message_id = utils.uid("msg")
+    if event.type not in {"unlock_attempt", "recap_response"}:
+        _mark_agent_emitted(session_id=session_id, edu=edu)
 
     if plan.need_llm:
         prompt_msgs = build_intervention_prompt(

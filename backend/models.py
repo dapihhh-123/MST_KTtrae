@@ -1,3 +1,4 @@
+
 from sqlalchemy import Column, String, Integer, Float, Boolean, Text, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from backend.database import Base
@@ -87,6 +88,10 @@ class EventLog(Base):
     session = relationship("Session", back_populates="events")
     code_state = relationship("CodeState", back_populates="events")
 
+# Fix: In original read output:
+# code_state = relationship("CodeState", back_populates="events")
+# And in CodeState: events = relationship("EventLog", back_populates="code_state")
+
 # 6.1) CodeState (Immutable snapshot for causality)
 class CodeState(Base):
     __tablename__ = "code_states"
@@ -171,9 +176,6 @@ class DiagnosisLog(Base):
     
     created_at = Column(Float, default=now)
 
-    # Relationships can be added if needed, e.g.
-    # event = relationship("EventLog")
-
 # 12) LearningDebt
 class LearningDebt(Base):
     __tablename__ = "learning_debts"
@@ -195,3 +197,82 @@ class ConceptMastery(Base):
     concept_id = Column(String) 
     mastery_score = Column(Float, default=0.0)
     last_updated_at = Column(Float, default=now)
+
+# 14) OracleTask
+class OracleTask(Base):
+    __tablename__ = "oracle_tasks"
+    
+    task_id = Column(String, primary_key=True, index=True)
+    project_id = Column(String, nullable=True)
+    created_at = Column(Float, default=now)
+    updated_at = Column(Float, default=now)
+
+# 15) OracleTaskVersion
+class OracleTaskVersion(Base):
+    __tablename__ = "oracle_task_versions"
+    
+    version_id = Column(String, primary_key=True, index=True)
+    task_id = Column(String, index=True) # Logical FK
+    version_number = Column(Integer, default=1)
+    status = Column(String) # ready, needs_clarification, etc.
+    created_at = Column(Float, default=now)
+    
+    spec_json = Column(JSON)
+    ambiguities_json = Column(JSON)
+    user_confirmations_json = Column(JSON)
+    
+    public_examples_json = Column(JSON)
+    hidden_tests_json = Column(JSON)
+    
+    oracle_confidence = Column(Float)
+    conflict_report_json = Column(JSON)
+    
+    seed = Column(Integer)
+    hash = Column(String)
+    
+    # Observability
+    spec_llm_raw_json = Column(JSON, nullable=True)
+    llm_raw_spec_json = Column(JSON, nullable=True) # Alias?
+    spec_llm_request_id = Column(String, nullable=True)
+    spec_prompt_version = Column(String, nullable=True)
+    llm_model_used = Column(String, nullable=True)
+    llm_provider_used = Column(String, nullable=True)
+    llm_latency_ms = Column(Integer, nullable=True)
+    
+    # Trace B1
+    normalized_input_hash = Column(String, nullable=True)
+    schema_version = Column(String, nullable=True)
+    interaction_model_pred = Column(String, nullable=True)
+    attempts = Column(Integer, nullable=True)
+    attempt_fail_reasons_json = Column(JSON, nullable=True)
+    missing_fields_json = Column(JSON, nullable=True)
+    
+    tests_llm_raw_json = Column(JSON, nullable=True)
+    llm_raw_tests_json = Column(JSON, nullable=True)
+    tests_llm_request_id = Column(String, nullable=True)
+    tests_prompt_version = Column(String, nullable=True)
+
+# 16) OracleRun
+class OracleRun(Base):
+    __tablename__ = "oracle_runs"
+    
+    run_id = Column(String, primary_key=True, index=True)
+    version_id = Column(String, index=True)
+    created_at = Column(Float, default=now)
+    
+    code_snapshot_id = Column(String, nullable=True)
+    code_text = Column(Text, nullable=True)
+    
+    pass_rate = Column(Float)
+    passed = Column(Integer)
+    failed = Column(Integer)
+    failures_summary_json = Column(JSON)
+    
+    runtime_ms = Column(Integer)
+    memory_kb = Column(Integer)
+    sandbox_mode = Column(String)
+    resource_limits_json = Column(JSON)
+    
+    stdout_trunc = Column(Text, nullable=True)
+    stderr_trunc = Column(Text, nullable=True)
+    sandbox_exit_code = Column(Integer, nullable=True)

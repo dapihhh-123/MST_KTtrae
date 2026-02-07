@@ -127,3 +127,10 @@ __pycache__/
 *.sqlite
 *.sqlite3
 .trae/
+
+# Project specific
+storage/
+benchmark_logs.txt
+*_evidence*.txt
+benchmark_results.json
+selected_benchmark_map.json

@@ -3,7 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from backend.config import BASE_DIR
 
-SQLALCHEMY_DATABASE_URL = f"sqlite:///{BASE_DIR}/backend.db"
+SQLALCHEMY_DATABASE_URL = "sqlite:///C:/Users/dapi/Desktop/MST_KTtrae/backend.db"
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}

@@ -1,0 +1,25 @@
+{
+  "goal_one_liner": "Create a Python CLI to count log levels from stdin.",
+  "deliverable": "cli",
+  "language": "python",
+  "runtime": "python",
+  "signature": {
+    "function_name": "main",
+    "args": [],
+    "returns": "int"
+  },
+  "constraints": ["Read from stdin", "Print to stdout"],
+  "assumptions": [],
+  "output_ops": [],
+  "output_shape": {"type": "json_object"},
+  "ambiguities": [
+    {
+      "ambiguity_id": "log_format",
+      "question": "What if the log line format is incorrect?",
+      "choices": [
+        {"choice_id": "Ignore the line", "text": "Ignore the line"},
+        {"choice_id": "Raise error", "text": "Raise error"}
+      ]
+    }
+  ]
+}

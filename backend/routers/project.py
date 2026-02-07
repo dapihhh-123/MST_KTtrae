@@ -1,12 +1,47 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend import models, schemas, utils
 from backend.services.chat_service import ChatService
 from backend.services.observation_logger import observation_logger, ObservationEventContext
-from typing import List
+from typing import List, Dict, Optional
+import os
+import json
+from pydantic import BaseModel
 
 router = APIRouter()
+
+# --- Workspace Persistence (File-based) ---
+WORKSPACE_STORAGE_DIR = "storage/workspaces"
+os.makedirs(WORKSPACE_STORAGE_DIR, exist_ok=True)
+
+class WorkspaceSnapshot(BaseModel):
+    files: Dict[str, str]
+    entrypoint: str
+
+@router.post("/sessions/{session_id}/workspace")
+def save_workspace_state(session_id: str, snapshot: WorkspaceSnapshot):
+    """Save the full workspace state to disk for persistence"""
+    file_path = os.path.join(WORKSPACE_STORAGE_DIR, f"{session_id}.json")
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(snapshot.dict(), f, indent=2)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/sessions/{session_id}/workspace", response_model=WorkspaceSnapshot)
+def get_workspace_state(session_id: str):
+    """Load the full workspace state"""
+    file_path = os.path.join(WORKSPACE_STORAGE_DIR, f"{session_id}.json")
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- Workspace API ---
 @router.post("/workspaces", response_model=schemas.Workspace)
@@ -117,6 +152,31 @@ def create_session(session: schemas.SessionCreate, db: Session = Depends(get_db)
         pass
     
     return db_session
+
+@router.get("/sessions", response_model=List[schemas.Session])
+def get_sessions(workspace_id: str = None, db: Session = Depends(get_db)):
+    query = db.query(models.Session)
+    if workspace_id:
+        query = query.filter(models.Session.workspace_id == workspace_id)
+    return query.order_by(models.Session.updated_at.desc()).all()
+
+@router.delete("/sessions/{session_id}")
+def delete_session(session_id: str, db: Session = Depends(get_db)):
+    sess = db.query(models.Session).filter(models.Session.id == session_id).first()
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Cascade delete (if not handled by DB FKs)
+    # Deleting threads, snapshots, etc. might be needed if cascade isn't set up.
+    # Assuming DB cascade or manual cleanup. Let's do manual to be safe for now.
+    db.query(models.CodeSnapshot).filter(models.CodeSnapshot.session_id == session_id).delete()
+    db.query(models.Thread).filter(models.Thread.session_id == session_id).delete()
+    db.query(models.EventLog).filter(models.EventLog.session_id == session_id).delete()
+    db.query(models.Marker).filter(models.Marker.session_id == session_id).delete()
+    
+    db.delete(sess)
+    db.commit()
+    return {"ok": True, "deleted_id": session_id}
 
 @router.get("/sessions/{session_id}", response_model=schemas.Session)
 def get_session(session_id: str, db: Session = Depends(get_db)):

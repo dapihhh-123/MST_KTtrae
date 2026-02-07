@@ -1,0 +1,25 @@
+{
+  "goal_one_liner": "Implement a ticketing system for repair requests.",
+  "deliverable": "function",
+  "language": "python",
+  "runtime": "python",
+  "signature": {
+    "function_name": "solve",
+    "args": ["ops"],
+    "returns": "list"
+  },
+  "constraints": [],
+  "assumptions": [],
+  "output_ops": ["create", "assign", "resolve"],
+  "output_shape": {"type": "dict"},
+  "ambiguities": [
+    {
+      "ambiguity_id": "operation_order",
+      "question": "What happens if the same ticket_id receives multiple status updates?",
+      "choices": [
+        {"choice_id": "Last operation takes precedence", "text": "Last operation takes precedence"},
+        {"choice_id": "First operation takes precedence", "text": "First operation takes precedence"}
+      ]
+    }
+  ]
+}
