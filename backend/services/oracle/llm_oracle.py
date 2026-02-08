@@ -208,6 +208,7 @@ def generate_spec_with_llm(
     
     attempts = 0
     fail_reasons = []
+    last_fail_reason: Optional[str] = None
     
     # Defaults for metadata in case of catastrophic failure
     last_request_id = None
@@ -222,8 +223,8 @@ def generate_spec_with_llm(
                 messages=messages,
                 model=ZHIPU_MODEL, # Use Zhipu model
                 temperature=0.2,
-                extra_client_config=zhipu_config # Inject Zhipu config
-                # response_format={"type": "json_object"} # Assuming client supports this, checking llm_service wrapper
+                extra_client_config=zhipu_config, # Inject Zhipu config
+                response_format={"type": "json_object"}
             )
             
             last_latency_ms = response.get("latency_ms")
@@ -237,7 +238,11 @@ def generate_spec_with_llm(
             elif "```" in raw_text:
                 json_text = raw_text.split("```")[1].split("```")[0]
             
-            data = json.loads(json_text.strip())
+            try:
+                data = json.loads(json_text.strip())
+            except json.JSONDecodeError:
+                repaired_json_text = repair_json_syntax(json_text)
+                data = json.loads(repaired_json_text.strip())
             
             spec = TaskSpec.model_validate(data)
             if spec.deliverable != deliverable_type:
@@ -289,20 +294,29 @@ def generate_spec_with_llm(
 
                 # Stop retrying blindly: Check if this error is identical to the previous one
                 current_fail_reason = f"{e.error_code}: {e.message} (field: {e.field_path})"
-                if fail_reasons and fail_reasons[-1] == current_fail_reason:
-                    # Duplicate failure detected - exit early or escalate
-                    # For now, we will just record it and let the loop continue until retries exhaust, 
-                    # but we could break here if we wanted "fail fast on stuck".
-                    # Let's add a "STUCK" marker to the message to help debugging
-                    current_fail_reason += " [STUCK]"
+                if last_fail_reason == current_fail_reason:
+                    metadata = {
+                        "normalized_input_hash": input_hash,
+                        "prompt_version": PROMPT_VERSION,
+                        "schema_version": SCHEMA_VERSION,
+                        "interaction_model_pred": interaction_model,
+                        "attempts": attempts,
+                        "attempt_fail_reasons": fail_reasons + [f"{current_fail_reason} [STUCK]"],
+                        "llm_provider_used": "zhipu",
+                        "llm_model_used": response.get("model", ZHIPU_MODEL),
+                        "llm_latency_ms": last_latency_ms,
+                        "request_id": last_request_id,
+                        "raw_text": raw_text,
+                        "missing_fields": missing,
+                        "ambiguities": spec.ambiguities
+                    }
+                    raise OracleAnalyzeError("analyze_failed_stuck_validation", metadata)
                 
                 fail_reasons.append(current_fail_reason)
+                last_fail_reason = current_fail_reason
                 
                 # Inject validator feedback into subsequent LLM attempts
-                # OPTIMIZATION: Truncate history to prevent token explosion
-                raw_text_truncated = raw_text[:1000] + "...[TRUNCATED]" if len(raw_text) > 1000 else raw_text
-                messages.append({"role": "assistant", "content": raw_text_truncated})
-                
+                # OPTIMIZATION: Provide only a concise error summary to avoid token explosion
                 # Construct Fix Guidance
                 guidance = f"""Validation Error: {e.message}
 Rule ID: {e.error_code}
@@ -319,9 +333,6 @@ Instruction: Please fix the JSON to comply with this rule. Do not repeat the sam
             if missing:
                 # Self-Correction Loop
                 fail_reasons.append(f"missing_fields: {missing}")
-                # OPTIMIZATION: Truncate
-                raw_text_truncated = raw_text[:1000] + "...[TRUNCATED]" if len(raw_text) > 1000 else raw_text
-                messages.append({"role": "assistant", "content": raw_text_truncated})
                 messages.append({"role": "user", "content": f"Validation Error: Missing required fields {missing}. Please fix."})
                 continue
                 
@@ -362,9 +373,6 @@ Instruction: Please fix the JSON to comply with this rule. Do not repeat the sam
                     return spec.model_dump(), metadata
 
                 fail_reasons.append(f"contradictions: {contradictions}")
-                # OPTIMIZATION: Truncate
-                raw_text_truncated = raw_text[:1000] + "...[TRUNCATED]" if len(raw_text) > 1000 else raw_text
-                messages.append({"role": "assistant", "content": raw_text_truncated})
                 messages.append({"role": "user", "content": f"Validation Error: Contradictions detected {contradictions}. \n\nCRITICAL FIX REQUIRED:\n1. If the task is a CLI tool printing text, change 'signature.returns' to 'Any' or 'str'.\n2. If the examples use strings/lists, ensure 'signature.returns' matches.\n3. Do not assume 'int' for CLI unless it only returns an exit code.\n\nPlease fix the JSON."})
                 continue
             
