@@ -26,7 +26,8 @@ class LLMService:
              max_tokens: Optional[int] = None,
              tools: Optional[List[Dict]] = None,
              tool_choice: Optional[Any] = None,
-             extra_client_config: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+             extra_client_config: Optional[Dict[str, str]] = None,
+             response_format: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Unified chat method with error handling and standard response format.
         extra_client_config: Optional dict with 'api_key' and 'base_url' to override default client.
@@ -70,6 +71,8 @@ class LLMService:
             kwargs["tools"] = tools
         if tool_choice:
             kwargs["tool_choice"] = tool_choice
+        if response_format:
+            kwargs["response_format"] = response_format
 
         # Use with_raw_response to capture headers (x-request-id)
         # Assuming openai>=1.0
