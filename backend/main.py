@@ -8,7 +8,7 @@ from backend import models
 from backend.database import engine
 from backend.config import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL, KEY_FINGERPRINT, DOTENV_PATH, ENV_LOADED
 # from backend.routers import chat, project, diagnose, events, agent, selfcheck, debug, dev, llm_api, runner
-from backend.routers import chat, project, diagnose, agent, selfcheck, debug, dev, llm_api, runner, oracle
+from backend.routers import chat, project, diagnose, agent, selfcheck, debug, dev, llm_api, runner, oracle, psw_telemetry
 from backend.services.websocket_service import manager
 
 # Setup Logging
@@ -49,6 +49,7 @@ app.include_router(dev.router, prefix="/api", tags=["dev"])
 app.include_router(llm_api.router, prefix="/api", tags=["llm"])
 app.include_router(runner.router, prefix="/api", tags=["runner"])
 app.include_router(oracle.router, prefix="/api", tags=["oracle"]) # Added oracle
+app.include_router(psw_telemetry.router, prefix="/api", tags=["psw-telemetry"])
 app.include_router(diagnose.router, tags=["diagnose"]) # Keep root /diagnose for backward compat or move to /api
 
 @app.on_event("startup")

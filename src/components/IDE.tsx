@@ -6,6 +6,7 @@ import EducationPane from "./EducationPane";
 import OracleFloatingPanel from "./oracle/OracleFloatingPanel"; // Import Oracle Panel
 import FileExplorer from "./FileExplorer";
 import WorkspaceTabs from "./WorkspaceTabs";
+import PSWIndicator from "./PSWIndicator";
 
 import type { AIPresenceState, Breakout, GlobalThread, Range, Message } from "../types";
 import type { AgentAction, UIAction } from "../actions";
@@ -17,6 +18,9 @@ import { api } from "../services/api";
 import { socket } from "../services/socket";
 import { makeChunkKey } from "../utils/stableKey";
 import { resetSessionLocal } from "../services/session";
+import { createPSWDetector, type PSWOutput } from "../psw/psw_detector";
+import { DEFAULT_PSW_CONFIG } from "../psw/config";
+import type { TelemetryEvent } from "../psw/telemetry";
 
 type AppState = {
   // code: string; // REPLACED by workspace
@@ -277,7 +281,30 @@ function initialState(): AppState {
 export default function IDE(props: { sessionId: string; onExit: () => void }) {
   const [state, dispatch] = useReducer(reducer, undefined as any, initialState);
   const [oracleOpen, setOracleOpen] = useState(false); // Toggle state for Oracle Panel
-  
+  const pswDetectorRef = useRef(createPSWDetector(DEFAULT_PSW_CONFIG));
+  const [pswOutput, setPswOutput] = useState<PSWOutput>(() => ({
+    state: "In-PSW",
+    metrics: {
+      S: 0,
+      S_best: 0,
+      chunk_active_time: 0,
+      chunk_runs: 0,
+      chunk_max_idle: 0,
+      chunk_edit_chars: 0,
+      chunk_edit_events: 0,
+      last_run_ts: null,
+      last_activity_ts: null,
+    },
+    reason: "init",
+    thresholds: DEFAULT_PSW_CONFIG,
+  }));
+  const [showHelp, setShowHelp] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const lastActivityRef = useRef<number>(Date.now());
+  const sustainStartRef = useRef<number | null>(null);
+  const lastPswStateRef = useRef<PSWOutput["state"]>("In-PSW");
+  const lastBadgeLogRef = useRef<number | null>(null);
+  const telemetryBufferRef = useRef<TelemetryEvent[]>([]);
   // Task 2: Fix duplicated chunks using seen set
   // Key format: threadId:messageId:seq
   const seenChunksRef = useRef<Set<string>>(new Set());
@@ -527,6 +554,82 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
     return () => clearTimeout(timer);
   }, [activeCode, state.workspace.activeFile, state.workspace.files, state.workspace.entrypoint]);
 
+  const recordPSWOutput = (output: PSWOutput, eventTs: number) => {
+    setPswOutput(output);
+    if (lastPswStateRef.current !== output.state) {
+      sustainStartRef.current = null;
+      console.info("[psw] state_change", {
+        state: output.state,
+        at: new Date(eventTs).toISOString(),
+        metrics: output.metrics,
+      });
+      lastPswStateRef.current = output.state;
+    }
+    if (output.state === "In-PSW") {
+      sustainStartRef.current = null;
+      setShowHelp(false);
+      return;
+    }
+    if (!sustainStartRef.current) {
+      sustainStartRef.current = eventTs;
+    }
+    const sustainedMs = eventTs - (sustainStartRef.current ?? eventTs);
+    const shouldShow = sustainedMs >= DEFAULT_PSW_CONFIG.PSW_SUSTAIN_SECONDS * 1000;
+    setShowHelp(shouldShow);
+    if (shouldShow && (!lastBadgeLogRef.current || eventTs - lastBadgeLogRef.current > 1000)) {
+      lastBadgeLogRef.current = eventTs;
+      console.info("[psw] help_badge_shown", { state: output.state, at: new Date(eventTs).toISOString() });
+    }
+  };
+
+  const enqueueTelemetry = (event: TelemetryEvent) => {
+    telemetryBufferRef.current.push(event);
+    const output = pswDetectorRef.current.ingest(event);
+    recordPSWOutput(output, event.ts);
+  };
+
+  const handleEditorTelemetry = (type: string, payload: any) => {
+    api.reportEvent(type, payload).catch(() => {});
+    if (type === "edit") {
+      lastActivityRef.current = Date.now();
+      const delta = Number(payload?.chars_added ?? 0);
+      const cursorLine = payload?.changed_range?.startLine ?? payload?.cursor_line ?? null;
+      enqueueTelemetry({
+        ts: Date.now(),
+        type: "edit",
+        payload: {
+          delta_chars: delta,
+          cursor_line: cursorLine,
+          file_id: state.workspace.activeFile,
+        },
+      });
+    }
+  };
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const nowTs = Date.now();
+      const idleSeconds = Math.floor((nowTs - lastActivityRef.current) / 1000);
+      enqueueTelemetry({
+        ts: nowTs,
+        type: "idle_heartbeat",
+        payload: { idle_seconds_since_last_activity: idleSeconds },
+      });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const sessionId = api.getSessionId();
+      if (!sessionId) return;
+      const batch = telemetryBufferRef.current.splice(0, telemetryBufferRef.current.length);
+      if (batch.length === 0) return;
+      api.reportTelemetryBatch(sessionId, batch).catch(() => {});
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const editorApiRef = useRef<EditorAPI | null>(null);
 
   // 用于取消上一轮 agent action（避免抢话/并发冲突）
@@ -697,6 +800,21 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
     playAgentActions({ actions, dispatch, editor: editorApiRef.current, signal: abortRef.current.signal });
   }
 
+  function parsePytestSummary(output: string) {
+    const passed = Number((/\b(\d+)\s+passed\b/i.exec(output) || [])[1] || 0);
+    const failed = Number((/\b(\d+)\s+failed\b/i.exec(output) || [])[1] || 0);
+    const errors = Number((/\b(\d+)\s+errors?\b/i.exec(output) || [])[1] || 0);
+    const total = passed + failed + errors;
+    if (total === 0) return null;
+    return { passed, failed, errors, total };
+  }
+
+  function inferErrorClass(stderr?: string) {
+    if (!stderr) return null;
+    const match = /([A-Za-z_]+Error)/.exec(stderr);
+    return match ? match[1] : null;
+  }
+
   async function runProgram() {
     abortRef.current?.abort();
     dispatch({ type: "CONSOLE_APPEND", entries: [{ id: uid("log"), kind: "info", text: "RUN..." }] });
@@ -727,9 +845,27 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
         duration_ms: res.duration_ms,
         timed_out: res.timed_out
       }, traceId, codeStateId).catch(() => {});
+      lastActivityRef.current = Date.now();
+      enqueueTelemetry({
+        ts: Date.now(),
+        type: "run_program",
+        payload: {
+          ok: res.ok,
+          duration_ms: res.duration_ms,
+        },
+      });
     } catch (e) {
       dispatch({ type: "CONSOLE_APPEND", entries: [{ id: uid("err"), kind: "error", text: String(e) }] });
       api.reportEvent("run_fail", { success: false, error: String(e) }, traceId, codeStateId).catch(() => {});
+      lastActivityRef.current = Date.now();
+      enqueueTelemetry({
+        ts: Date.now(),
+        type: "run_program",
+        payload: {
+          ok: false,
+          duration_ms: 0,
+        },
+      });
     }
   }
 
@@ -762,9 +898,37 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
         duration_ms: res.duration_ms,
         timed_out: res.timed_out
       }, traceId, codeStateId).catch(() => {});
+      const outputText = `${res.stdout || ""}
+${res.stderr || ""}`;
+      const summary = parsePytestSummary(outputText);
+      const passCount = summary?.passed ?? (res.ok ? 1 : 0);
+      const totalTests = summary?.total ?? 1;
+      const errorClass = inferErrorClass(res.stderr);
+      lastActivityRef.current = Date.now();
+      enqueueTelemetry({
+        ts: Date.now(),
+        type: "run_tests",
+        payload: {
+          pass_count: passCount,
+          total_tests: totalTests,
+          error_class: errorClass,
+          duration_ms: res.duration_ms,
+        },
+      });
     } catch (e) {
       dispatch({ type: "CONSOLE_APPEND", entries: [{ id: uid("err"), kind: "error", text: String(e) }] });
       api.reportEvent("test_fail", { success: false, error: String(e) }, traceId, codeStateId).catch(() => {});
+      lastActivityRef.current = Date.now();
+      enqueueTelemetry({
+        ts: Date.now(),
+        type: "run_tests",
+        payload: {
+          pass_count: 0,
+          total_tests: 1,
+          error_class: inferErrorClass(String(e)),
+          duration_ms: 0,
+        },
+      });
     }
   }
 
@@ -814,6 +978,11 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
         </div>
 
         <div className="right">
+          <PSWIndicator
+            state={pswOutput.state}
+            showHelp={showHelp}
+            onOpenHelp={() => setHelpOpen(true)}
+          />
           <button className={`btn ${oracleOpen ? "active" : "ghost"}`} onClick={() => setOracleOpen(!oracleOpen)}>🔮 Oracle</button>
           <button className="btn ghost" onClick={saveNow}>SAVE</button>
           <button className="btn ghost" onClick={endNow}>END</button>
@@ -871,7 +1040,7 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
                   onSendBreakout={onSendBreakout}
                   ai={state.ai}
                   highlights={state.highlights}
-                  onTelemetryEvent={(type, payload) => api.reportEvent(type, payload).catch(() => {})}
+                  onTelemetryEvent={handleEditorTelemetry}
                   onCreateBreakoutFromSelection={(s, e) => createBreakout(s, e)}
                   onUpdateBreakoutPosition={(id, x, y) => dispatch({ type: "BREAKOUT_SET_POSITION", breakoutId: id, position: { x, y } })}
                 />
@@ -889,6 +1058,11 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
             entries={state.consoleEntries}
             onClear={() => dispatch({ type: "CONSOLE_CLEAR" })}
           />
+          {helpOpen && (
+            <div className="pswHelpPanel">
+              Need help? This is a placeholder panel for future guidance (no content yet).
+            </div>
+          )}
         </div>
       </div>
       

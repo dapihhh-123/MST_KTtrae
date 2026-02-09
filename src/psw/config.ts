@@ -1,0 +1,21 @@
+export type PSWConfig = {
+  IDLE_CUTOFF_SECONDS: number;
+  T_ACTIVE_SECONDS: number;
+  RUN_GAP_SECONDS: number;
+  FLAIL_RUNS: number;
+  MIN_CHAR_CHANGE: number;
+  MIN_EDIT_EVENTS: number;
+  SMALL_EDIT: number;
+  PSW_SUSTAIN_SECONDS: number;
+};
+
+export const DEFAULT_PSW_CONFIG: PSWConfig = {
+  IDLE_CUTOFF_SECONDS: 60,
+  T_ACTIVE_SECONDS: 120,
+  RUN_GAP_SECONDS: 90,
+  FLAIL_RUNS: 3,
+  MIN_CHAR_CHANGE: 20,
+  MIN_EDIT_EVENTS: 12,
+  SMALL_EDIT: 5,
+  PSW_SUSTAIN_SECONDS: 20,
+};
