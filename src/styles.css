@@ -541,6 +541,7 @@ button, input, textarea{ font: inherit; }
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+
 .pswStatus {
   padding: 2px 8px;
   border-radius: 999px;
@@ -592,4 +593,11 @@ button, input, textarea{ font: inherit; }
   color: #cbd5f5;
   font-size: 13px;
   box-shadow: var(--shadow);
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+  color: #cbd5f5;
+  font-size: 13px;
 }
