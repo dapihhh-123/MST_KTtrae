@@ -1,12 +1,13 @@
 import { useState, useReducer, useEffect } from "react";
 import { oracleReducer, initialOracleState } from "../../reducers/oracleReducer";
-import { api, setApiLogger } from "../../services/api";
+import { setApiLogger } from "../../services/api";
 import OracleStatusBar from "./OracleStatusBar";
 import TaskSection from "./TaskSection";
 import SpecSection from "./SpecSection";
 import TestsSection from "./TestsSection";
 import RunSection from "./RunSection";
 import DebugSection from "./DebugSection";
+import { setOracleVersionIdForPSW } from "../../psw/oracle_integration";
 
 import "./OraclePanel.css"; // We'll create this CSS file
 
@@ -22,6 +23,11 @@ export default function OracleFloatingPanel(props: {
     setApiLogger((entry) => dispatch({ type: "LOG_API", payload: entry }));
     return () => setApiLogger(null);
   }, []);
+
+
+  useEffect(() => {
+    setOracleVersionIdForPSW(state.currentVersionId || null);
+  }, [state.currentVersionId]);
 
   // Auto-switch tabs based on stage
   useEffect(() => {

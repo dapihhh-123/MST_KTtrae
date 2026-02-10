@@ -17,10 +17,11 @@ import { playAgentActions, type EditorAPI } from "../actionPlayer";
 import { api } from "../services/api";
 import { socket } from "../services/socket";
 import { makeChunkKey } from "../utils/stableKey";
-import { resetSessionLocal } from "../services/session";
 import { createPSWDetector, type PSWOutput } from "../psw/psw_detector";
 import { DEFAULT_PSW_CONFIG } from "../psw/config";
 import type { TelemetryEvent } from "../psw/telemetry";
+import { mapOracleRunReportToRunTestsTelemetry } from "../psw/oracle_run_adapter";
+import { ORACLE_AS_RUN_TESTS, getOracleVersionIdForPSW } from "../psw/oracle_integration";
 
 type AppState = {
   // code: string; // REPLACED by workspace
@@ -63,7 +64,7 @@ function reducer(state: AppState, action: ExtendedUIAction): AppState {
           ...state.workspace,
           files: {
             ...state.workspace.files,
-            [state.workspace.activeFile]: action.code
+            [(state.workspace.activeFile || "main.py")]: action.code
           }
         }
       };
@@ -292,11 +293,12 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
       chunk_max_idle: 0,
       chunk_edit_chars: 0,
       chunk_edit_events: 0,
+      chunk_small_edit_events: 0,
       last_run_ts: null,
       last_activity_ts: null,
     },
     reason: "init",
-    thresholds: DEFAULT_PSW_CONFIG,
+    thresholds: { ...DEFAULT_PSW_CONFIG, theta: null, total_tests: null, psw_version: "1.0.0", config_hash: JSON.stringify(DEFAULT_PSW_CONFIG) },
   }));
   const [showHelp, setShowHelp] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -539,14 +541,15 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
   }, [props.sessionId]); // Re-boot if sessionId changes
 
   // Snapshot Throttling (2.7-C) & Workspace Persistence
-  const activeCode = state.workspace.files[state.workspace.activeFile] || "";
+  const activeFile = state.workspace.activeFile || "main.py";
+  const activeCode = state.workspace.files[activeFile] || "";
   useEffect(() => {
     const timer = setTimeout(() => {
        // 1. Legacy Snapshot (Active File)
        if (activeCode && activeCode !== DEFAULT_CODE) {
           const cursor = editorApiRef.current?.getCursor() || undefined;
           const sel = editorApiRef.current?.getSelectionRange() || undefined;
-          api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile).catch(e => console.error("Snapshot failed", e));
+          api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile || undefined).catch(e => console.error("Snapshot failed", e));
        }
        // 2. Full Workspace Persistence
        api.saveWorkspace(state.workspace.files, state.workspace.entrypoint).catch(e => console.error("Workspace save failed", e));
@@ -600,7 +603,7 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
         payload: {
           delta_chars: delta,
           cursor_line: cursorLine,
-          file_id: state.workspace.activeFile,
+          file_id: state.workspace.activeFile || undefined,
         },
       });
     }
@@ -828,7 +831,7 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
 
     const cursor = editorApiRef.current?.getCursor() || undefined;
     const sel = editorApiRef.current?.getSelectionRange() || undefined;
-    await api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile).catch(() => {});
+    await api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile || undefined).catch(() => {});
 
     api.reportEvent("run", { run_id: uid("run"), run_command: "python", cwd: ".", code_len: activeCode.length }, traceId, codeStateId).catch(() => {});
     try {
@@ -882,9 +885,32 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
 
     const cursor = editorApiRef.current?.getCursor() || undefined;
     const sel = editorApiRef.current?.getSelectionRange() || undefined;
-    await api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile).catch(() => {});
+    await api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile || undefined).catch(() => {});
 
     api.reportEvent("test", { test_id: uid("test"), run_command: "python -m pytest", cwd: ".", code_len: activeCode.length }, traceId, codeStateId).catch(() => {});
+
+    if (ORACLE_AS_RUN_TESTS) {
+      const versionId = getOracleVersionIdForPSW();
+      if (!versionId) {
+        dispatch({ type: "CONSOLE_APPEND", entries: [{ id: uid("warn"), kind: "info", text: "Oracle run is enabled for PSW, but no Oracle version is selected." }] });
+        return;
+      }
+      try {
+        const run = await api.oracleRun(versionId, {
+          code_text: activeCode,
+          workspace_files: state.workspace.files,
+          entrypoint: state.workspace.entrypoint,
+          timeout_sec: 2.5,
+        });
+        const oracleEvent = mapOracleRunReportToRunTestsTelemetry(run, Date.now());
+        lastActivityRef.current = oracleEvent.ts;
+        enqueueTelemetry(oracleEvent);
+      } catch (e) {
+        dispatch({ type: "CONSOLE_APPEND", entries: [{ id: uid("err"), kind: "error", text: `Oracle run failed: ${String(e)}` }] });
+      }
+      return;
+    }
+
     try {
       const res = await api.testCode(activeCode);
       if (res.stdout) dispatch({ type: "CONSOLE_APPEND", entries: [{ id: uid("out"), kind: "log", text: res.stdout.trimEnd() }] });
@@ -935,8 +961,8 @@ ${res.stderr || ""}`;
   async function saveNow() {
     const cursor = editorApiRef.current?.getCursor() || undefined;
     const sel = editorApiRef.current?.getSelectionRange() || undefined;
-    await api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile).catch(() => {});
-    api.reportEvent("edit", { event_subtype: "save", file_path: state.workspace.activeFile, cursor_line: cursor?.line, cursor_col: cursor?.col }).catch(() => {});
+    await api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile || undefined).catch(() => {});
+    api.reportEvent("edit", { event_subtype: "save", file_path: state.workspace.activeFile || undefined, cursor_line: cursor?.line, cursor_col: cursor?.col }).catch(() => {});
     dispatch({ type: "CONSOLE_APPEND", entries: [{ id: uid("save"), kind: "info", text: "SAVED (snapshot + event)" }] });
   }
 

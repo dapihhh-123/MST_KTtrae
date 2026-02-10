@@ -17,6 +17,7 @@ export type TelemetryRunTestsPayload = {
   total_tests: number;
   error_class?: string | null;
   duration_ms: number;
+  oracle_version_id?: string;
 };
 
 export type TelemetryIdlePayload = {

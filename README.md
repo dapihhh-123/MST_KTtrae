@@ -55,3 +55,13 @@ All thresholds live in `src/psw/config.ts` and are echoed in PSW output.
 ## Spec baseline & test config
 - Full baseline spec: `docs/psw_spec.md`
 - Fixed test config: `psw/test_config.json`
+
+## Oracle -> PSW run_tests adapter (feature flagged)
+- Flag: `VITE_ORACLE_AS_RUN_TESTS`
+- Default: `false` (OFF)
+- OFF behavior: IDE `TEST` button keeps current local `testCode` flow unchanged.
+- ON behavior: IDE `TEST` button uses Oracle Run (existing API) and maps run report to PSW `run_tests` telemetry via adapter.
+- Oracle context source: selected Oracle `currentVersionId` is mirrored to localStorage key `psw_oracle_version_id` by Oracle panel.
+
+### Rollback
+Set `VITE_ORACLE_AS_RUN_TESTS=false` (or unset it) and reload frontend. This restores the original local test path.

@@ -192,7 +192,7 @@ export class PSWDetector {
         pre_chunk_edit_chars: this.state.chunkEditChars,
         pre_chunk_small_edit_events: this.state.chunkSmallEditEvents,
       };
-      this.resetChunk("significant_progress");
+      this.resetChunk();
     } else {
       this.state.chunkRuns += 1;
     }
@@ -221,7 +221,7 @@ export class PSWDetector {
     }
   }
 
-  private resetChunk(reason: string) {
+  private resetChunk() {
     this.state.chunkActiveSeconds = 0;
     this.state.chunkRuns = 0;
     this.state.chunkMaxIdleSeconds = 0;
