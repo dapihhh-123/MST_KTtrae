@@ -6,6 +6,7 @@ import EducationPane from "./EducationPane";
 import OracleFloatingPanel from "./oracle/OracleFloatingPanel"; // Import Oracle Panel
 import FileExplorer from "./FileExplorer";
 import WorkspaceTabs from "./WorkspaceTabs";
+import PSWIndicator from "./PSWIndicator";
 
 import type { AIPresenceState, Breakout, GlobalThread, Range, Message } from "../types";
 import type { AgentAction, UIAction } from "../actions";
@@ -16,7 +17,11 @@ import { playAgentActions, type EditorAPI } from "../actionPlayer";
 import { api } from "../services/api";
 import { socket } from "../services/socket";
 import { makeChunkKey } from "../utils/stableKey";
-import { resetSessionLocal } from "../services/session";
+import { createPSWDetector, type PSWOutput } from "../psw/psw_detector";
+import { DEFAULT_PSW_CONFIG } from "../psw/config";
+import type { TelemetryEvent } from "../psw/telemetry";
+import { mapOracleRunReportToRunTestsTelemetry } from "../psw/oracle_run_adapter";
+import { ORACLE_AS_RUN_TESTS, getOracleVersionIdForPSW } from "../psw/oracle_integration";
 
 type AppState = {
   // code: string; // REPLACED by workspace
@@ -59,7 +64,7 @@ function reducer(state: AppState, action: ExtendedUIAction): AppState {
           ...state.workspace,
           files: {
             ...state.workspace.files,
-            [state.workspace.activeFile]: action.code
+            [(state.workspace.activeFile || "main.py")]: action.code
           }
         }
       };
@@ -277,7 +282,31 @@ function initialState(): AppState {
 export default function IDE(props: { sessionId: string; onExit: () => void }) {
   const [state, dispatch] = useReducer(reducer, undefined as any, initialState);
   const [oracleOpen, setOracleOpen] = useState(false); // Toggle state for Oracle Panel
-  
+  const pswDetectorRef = useRef(createPSWDetector(DEFAULT_PSW_CONFIG));
+  const [pswOutput, setPswOutput] = useState<PSWOutput>(() => ({
+    state: "In-PSW",
+    metrics: {
+      S: 0,
+      S_best: 0,
+      chunk_active_time: 0,
+      chunk_runs: 0,
+      chunk_max_idle: 0,
+      chunk_edit_chars: 0,
+      chunk_edit_events: 0,
+      chunk_small_edit_events: 0,
+      last_run_ts: null,
+      last_activity_ts: null,
+    },
+    reason: "init",
+    thresholds: { ...DEFAULT_PSW_CONFIG, theta: null, total_tests: null, psw_version: "1.0.0", config_hash: JSON.stringify(DEFAULT_PSW_CONFIG) },
+  }));
+  const [showHelp, setShowHelp] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const lastActivityRef = useRef<number>(Date.now());
+  const sustainStartRef = useRef<number | null>(null);
+  const lastPswStateRef = useRef<PSWOutput["state"]>("In-PSW");
+  const lastBadgeLogRef = useRef<number | null>(null);
+  const telemetryBufferRef = useRef<TelemetryEvent[]>([]);
   // Task 2: Fix duplicated chunks using seen set
   // Key format: threadId:messageId:seq
   const seenChunksRef = useRef<Set<string>>(new Set());
@@ -512,20 +541,97 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
   }, [props.sessionId]); // Re-boot if sessionId changes
 
   // Snapshot Throttling (2.7-C) & Workspace Persistence
-  const activeCode = state.workspace.files[state.workspace.activeFile] || "";
+  const activeFile = state.workspace.activeFile || "main.py";
+  const activeCode = state.workspace.files[activeFile] || "";
   useEffect(() => {
     const timer = setTimeout(() => {
        // 1. Legacy Snapshot (Active File)
        if (activeCode && activeCode !== DEFAULT_CODE) {
           const cursor = editorApiRef.current?.getCursor() || undefined;
           const sel = editorApiRef.current?.getSelectionRange() || undefined;
-          api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile).catch(e => console.error("Snapshot failed", e));
+          api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile || undefined).catch(e => console.error("Snapshot failed", e));
        }
        // 2. Full Workspace Persistence
        api.saveWorkspace(state.workspace.files, state.workspace.entrypoint).catch(e => console.error("Workspace save failed", e));
     }, 2000); // 2s debounce
     return () => clearTimeout(timer);
   }, [activeCode, state.workspace.activeFile, state.workspace.files, state.workspace.entrypoint]);
+
+  const recordPSWOutput = (output: PSWOutput, eventTs: number) => {
+    setPswOutput(output);
+    if (lastPswStateRef.current !== output.state) {
+      sustainStartRef.current = null;
+      console.info("[psw] state_change", {
+        state: output.state,
+        at: new Date(eventTs).toISOString(),
+        metrics: output.metrics,
+      });
+      lastPswStateRef.current = output.state;
+    }
+    if (output.state === "In-PSW") {
+      sustainStartRef.current = null;
+      setShowHelp(false);
+      return;
+    }
+    if (!sustainStartRef.current) {
+      sustainStartRef.current = eventTs;
+    }
+    const sustainedMs = eventTs - (sustainStartRef.current ?? eventTs);
+    const shouldShow = sustainedMs >= DEFAULT_PSW_CONFIG.PSW_SUSTAIN_SECONDS * 1000;
+    setShowHelp(shouldShow);
+    if (shouldShow && (!lastBadgeLogRef.current || eventTs - lastBadgeLogRef.current > 1000)) {
+      lastBadgeLogRef.current = eventTs;
+      console.info("[psw] help_badge_shown", { state: output.state, at: new Date(eventTs).toISOString() });
+    }
+  };
+
+  const enqueueTelemetry = (event: TelemetryEvent) => {
+    telemetryBufferRef.current.push(event);
+    const output = pswDetectorRef.current.ingest(event);
+    recordPSWOutput(output, event.ts);
+  };
+
+  const handleEditorTelemetry = (type: string, payload: any) => {
+    api.reportEvent(type, payload).catch(() => {});
+    if (type === "edit") {
+      lastActivityRef.current = Date.now();
+      const delta = Number(payload?.chars_added ?? 0);
+      const cursorLine = payload?.changed_range?.startLine ?? payload?.cursor_line ?? null;
+      enqueueTelemetry({
+        ts: Date.now(),
+        type: "edit",
+        payload: {
+          delta_chars: delta,
+          cursor_line: cursorLine,
+          file_id: state.workspace.activeFile || undefined,
+        },
+      });
+    }
+  };
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const nowTs = Date.now();
+      const idleSeconds = Math.floor((nowTs - lastActivityRef.current) / 1000);
+      enqueueTelemetry({
+        ts: nowTs,
+        type: "idle_heartbeat",
+        payload: { idle_seconds_since_last_activity: idleSeconds },
+      });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const sessionId = api.getSessionId();
+      if (!sessionId) return;
+      const batch = telemetryBufferRef.current.splice(0, telemetryBufferRef.current.length);
+      if (batch.length === 0) return;
+      api.reportTelemetryBatch(sessionId, batch).catch(() => {});
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const editorApiRef = useRef<EditorAPI | null>(null);
 
@@ -697,6 +803,21 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
     playAgentActions({ actions, dispatch, editor: editorApiRef.current, signal: abortRef.current.signal });
   }
 
+  function parsePytestSummary(output: string) {
+    const passed = Number((/\b(\d+)\s+passed\b/i.exec(output) || [])[1] || 0);
+    const failed = Number((/\b(\d+)\s+failed\b/i.exec(output) || [])[1] || 0);
+    const errors = Number((/\b(\d+)\s+errors?\b/i.exec(output) || [])[1] || 0);
+    const total = passed + failed + errors;
+    if (total === 0) return null;
+    return { passed, failed, errors, total };
+  }
+
+  function inferErrorClass(stderr?: string) {
+    if (!stderr) return null;
+    const match = /([A-Za-z_]+Error)/.exec(stderr);
+    return match ? match[1] : null;
+  }
+
   async function runProgram() {
     abortRef.current?.abort();
     dispatch({ type: "CONSOLE_APPEND", entries: [{ id: uid("log"), kind: "info", text: "RUN..." }] });
@@ -710,7 +831,7 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
 
     const cursor = editorApiRef.current?.getCursor() || undefined;
     const sel = editorApiRef.current?.getSelectionRange() || undefined;
-    await api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile).catch(() => {});
+    await api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile || undefined).catch(() => {});
 
     api.reportEvent("run", { run_id: uid("run"), run_command: "python", cwd: ".", code_len: activeCode.length }, traceId, codeStateId).catch(() => {});
     try {
@@ -727,9 +848,27 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
         duration_ms: res.duration_ms,
         timed_out: res.timed_out
       }, traceId, codeStateId).catch(() => {});
+      lastActivityRef.current = Date.now();
+      enqueueTelemetry({
+        ts: Date.now(),
+        type: "run_program",
+        payload: {
+          ok: res.ok,
+          duration_ms: res.duration_ms,
+        },
+      });
     } catch (e) {
       dispatch({ type: "CONSOLE_APPEND", entries: [{ id: uid("err"), kind: "error", text: String(e) }] });
       api.reportEvent("run_fail", { success: false, error: String(e) }, traceId, codeStateId).catch(() => {});
+      lastActivityRef.current = Date.now();
+      enqueueTelemetry({
+        ts: Date.now(),
+        type: "run_program",
+        payload: {
+          ok: false,
+          duration_ms: 0,
+        },
+      });
     }
   }
 
@@ -746,9 +885,32 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
 
     const cursor = editorApiRef.current?.getCursor() || undefined;
     const sel = editorApiRef.current?.getSelectionRange() || undefined;
-    await api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile).catch(() => {});
+    await api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile || undefined).catch(() => {});
 
     api.reportEvent("test", { test_id: uid("test"), run_command: "python -m pytest", cwd: ".", code_len: activeCode.length }, traceId, codeStateId).catch(() => {});
+
+    if (ORACLE_AS_RUN_TESTS) {
+      const versionId = getOracleVersionIdForPSW();
+      if (!versionId) {
+        dispatch({ type: "CONSOLE_APPEND", entries: [{ id: uid("warn"), kind: "info", text: "Oracle run is enabled for PSW, but no Oracle version is selected." }] });
+        return;
+      }
+      try {
+        const run = await api.oracleRun(versionId, {
+          code_text: activeCode,
+          workspace_files: state.workspace.files,
+          entrypoint: state.workspace.entrypoint,
+          timeout_sec: 2.5,
+        });
+        const oracleEvent = mapOracleRunReportToRunTestsTelemetry(run, Date.now());
+        lastActivityRef.current = oracleEvent.ts;
+        enqueueTelemetry(oracleEvent);
+      } catch (e) {
+        dispatch({ type: "CONSOLE_APPEND", entries: [{ id: uid("err"), kind: "error", text: `Oracle run failed: ${String(e)}` }] });
+      }
+      return;
+    }
+
     try {
       const res = await api.testCode(activeCode);
       if (res.stdout) dispatch({ type: "CONSOLE_APPEND", entries: [{ id: uid("out"), kind: "log", text: res.stdout.trimEnd() }] });
@@ -762,17 +924,45 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
         duration_ms: res.duration_ms,
         timed_out: res.timed_out
       }, traceId, codeStateId).catch(() => {});
+      const outputText = `${res.stdout || ""}
+${res.stderr || ""}`;
+      const summary = parsePytestSummary(outputText);
+      const passCount = summary?.passed ?? (res.ok ? 1 : 0);
+      const totalTests = summary?.total ?? 1;
+      const errorClass = inferErrorClass(res.stderr);
+      lastActivityRef.current = Date.now();
+      enqueueTelemetry({
+        ts: Date.now(),
+        type: "run_tests",
+        payload: {
+          pass_count: passCount,
+          total_tests: totalTests,
+          error_class: errorClass,
+          duration_ms: res.duration_ms,
+        },
+      });
     } catch (e) {
       dispatch({ type: "CONSOLE_APPEND", entries: [{ id: uid("err"), kind: "error", text: String(e) }] });
       api.reportEvent("test_fail", { success: false, error: String(e) }, traceId, codeStateId).catch(() => {});
+      lastActivityRef.current = Date.now();
+      enqueueTelemetry({
+        ts: Date.now(),
+        type: "run_tests",
+        payload: {
+          pass_count: 0,
+          total_tests: 1,
+          error_class: inferErrorClass(String(e)),
+          duration_ms: 0,
+        },
+      });
     }
   }
 
   async function saveNow() {
     const cursor = editorApiRef.current?.getCursor() || undefined;
     const sel = editorApiRef.current?.getSelectionRange() || undefined;
-    await api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile).catch(() => {});
-    api.reportEvent("edit", { event_subtype: "save", file_path: state.workspace.activeFile, cursor_line: cursor?.line, cursor_col: cursor?.col }).catch(() => {});
+    await api.saveCodeSnapshot(activeCode, cursor, sel, state.workspace.activeFile || undefined).catch(() => {});
+    api.reportEvent("edit", { event_subtype: "save", file_path: state.workspace.activeFile || undefined, cursor_line: cursor?.line, cursor_col: cursor?.col }).catch(() => {});
     dispatch({ type: "CONSOLE_APPEND", entries: [{ id: uid("save"), kind: "info", text: "SAVED (snapshot + event)" }] });
   }
 
@@ -814,6 +1004,11 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
         </div>
 
         <div className="right">
+          <PSWIndicator
+            state={pswOutput.state}
+            showHelp={showHelp}
+            onOpenHelp={() => setHelpOpen(true)}
+          />
           <button className={`btn ${oracleOpen ? "active" : "ghost"}`} onClick={() => setOracleOpen(!oracleOpen)}>🔮 Oracle</button>
           <button className="btn ghost" onClick={saveNow}>SAVE</button>
           <button className="btn ghost" onClick={endNow}>END</button>
@@ -871,7 +1066,7 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
                   onSendBreakout={onSendBreakout}
                   ai={state.ai}
                   highlights={state.highlights}
-                  onTelemetryEvent={(type, payload) => api.reportEvent(type, payload).catch(() => {})}
+                  onTelemetryEvent={handleEditorTelemetry}
                   onCreateBreakoutFromSelection={(s, e) => createBreakout(s, e)}
                   onUpdateBreakoutPosition={(id, x, y) => dispatch({ type: "BREAKOUT_SET_POSITION", breakoutId: id, position: { x, y } })}
                 />
@@ -889,6 +1084,11 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
             entries={state.consoleEntries}
             onClear={() => dispatch({ type: "CONSOLE_CLEAR" })}
           />
+          {helpOpen && (
+            <div className="pswHelpPanel">
+              Need help? This is a placeholder panel for future guidance (no content yet).
+            </div>
+          )}
         </div>
       </div>
       

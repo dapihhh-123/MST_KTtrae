@@ -243,6 +243,12 @@ export const api = {
       body: JSON.stringify({ type: eventType, payload, trace_id: traceId, code_state_id: codeStateId })
     }),
 
+  reportTelemetryBatch: (sessionId: string, events: any[]) =>
+    request<{ ok: boolean; path: string; count: number }>(`/telemetry/batch`, {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId, events })
+    }),
+
   endSession: (reason?: string) =>
     request<{ ok: boolean; session_id: string; event_count: number; log_path: string }>(`/sessions/{session_id}/end`, {
       method: "POST",
