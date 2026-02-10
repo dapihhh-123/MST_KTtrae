@@ -301,6 +301,8 @@ export default function IDE(props: { sessionId: string; onExit: () => void }) {
     thresholds: { ...DEFAULT_PSW_CONFIG, theta: null, total_tests: null, psw_version: "1.0.0", config_hash: JSON.stringify(DEFAULT_PSW_CONFIG) },
   }));
   const [showHelp, setShowHelp] = useState(false);
+
+  const [pswPanelOpen, setPswPanelOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const lastActivityRef = useRef<number>(Date.now());
   const sustainStartRef = useRef<number | null>(null);
@@ -1007,6 +1009,8 @@ ${res.stderr || ""}`;
           <PSWIndicator
             state={pswOutput.state}
             showHelp={showHelp}
+            monitorOpen={pswPanelOpen}
+            onToggleMonitor={() => setPswPanelOpen((v) => !v)}
             onOpenHelp={() => setHelpOpen(true)}
           />
           <button className={`btn ${oracleOpen ? "active" : "ghost"}`} onClick={() => setOracleOpen(!oracleOpen)}>🔮 Oracle</button>
@@ -1084,9 +1088,44 @@ ${res.stderr || ""}`;
             entries={state.consoleEntries}
             onClear={() => dispatch({ type: "CONSOLE_CLEAR" })}
           />
-          {helpOpen && (
-            <div className="pswHelpPanel">
-              Need help? This is a placeholder panel for future guidance (no content yet).
+{pswPanelOpen && (
+  <div className="pswHelpPanel">
+    <div className="pswHelpPanelTitle">PSW Monitor</div>
+    <div className="pswHelpPanelGrid">
+      <div><strong>state</strong>: {pswOutput.state}</div>
+      <div><strong>show_help</strong>: {String(showHelp)}</div>
+      <div><strong>S</strong>: {pswOutput.metrics.S.toFixed(3)}</div>
+      <div><strong>S_best</strong>: {pswOutput.metrics.S_best.toFixed(3)}</div>
+      <div><strong>sig_progress</strong>: {String(pswOutput.reason.includes("significant_progress"))}</div>
+      <div><strong>theta</strong>: {pswOutput.thresholds.theta ?? "null"}</div>
+      <div><strong>active_time</strong>: {pswOutput.metrics.chunk_active_time.toFixed(1)}s</div>
+      <div><strong>T_active</strong>: {pswOutput.thresholds.T_ACTIVE_SECONDS}s</div>
+      <div><strong>chunk_runs</strong>: {pswOutput.metrics.chunk_runs}</div>
+      <div><strong>max_idle</strong>: {pswOutput.metrics.chunk_max_idle.toFixed(1)}s</div>
+      <div><strong>idle_cutoff</strong>: {pswOutput.thresholds.IDLE_CUTOFF_SECONDS}s</div>
+      <div><strong>run_gap</strong>: {pswOutput.metrics.last_run_ts && pswOutput.metrics.last_activity_ts
+        ? Math.max(0, (pswOutput.metrics.last_activity_ts - pswOutput.metrics.last_run_ts) / 1000).toFixed(1)
+        : "null"}s</div>
+      <div><strong>edit_chars</strong>: {pswOutput.metrics.chunk_edit_chars}</div>
+      <div><strong>small_edits</strong>: {pswOutput.metrics.chunk_small_edit_events}</div>
+      <div><strong>pre_reset_runs</strong>: {pswOutput.metrics.pre_chunk_runs ?? "null"}</div>
+      <div><strong>pre_reset_active</strong>: {pswOutput.metrics.pre_chunk_active_time ?? "null"}</div>
+      <div><strong>reason</strong>: {pswOutput.reason}</div>
+      <div><strong>version</strong>: {pswOutput.thresholds.psw_version}</div>
+      <div><strong>config_hash</strong>: {pswOutput.thresholds.config_hash}</div>
+    </div>
+  </div>
+)}
+
+{helpOpen && (
+  <div className="pswHelpPanel">
+    <div className="pswHelpPanelTitle">Help</div>
+    <div style={{ color: "#d8def8", fontSize: 12 }}>
+      Need help? This is a placeholder panel for future guidance (no content yet).
+    </div>
+  </div>
+)}
+
             </div>
           )}
         </div>

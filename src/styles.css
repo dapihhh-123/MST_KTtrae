@@ -508,6 +508,40 @@ button, input, textarea{ font: inherit; }
   font-size: 12px;
 }
 
+
+.pswStatusButton {
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.pswStatusButton--active {
+  border-color: rgba(124, 92, 255, 0.6);
+  box-shadow: 0 0 0 1px rgba(124, 92, 255, 0.35);
+}
+
+.pswHelpPanelTitle {
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: #e2e8ff;
+}
+
+.pswHelpPanelGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 6px 16px;
+}
+
+.pswHelpPanelGrid > div {
+  color: #d8def8;
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .pswStatus {
   padding: 2px 8px;
   border-radius: 999px;
@@ -545,6 +579,20 @@ button, input, textarea{ font: inherit; }
 }
 
 .pswHelpPanel {
+  position: fixed;
+  right: 12px;
+  top: 56px;
+  width: min(720px, calc(100vw - 24px));
+  max-height: 60vh;
+  overflow: auto;
+  z-index: 30;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(124, 92, 255, 0.35);
+  background: rgba(20, 24, 38, 0.96);
+  color: #cbd5f5;
+  font-size: 13px;
+  box-shadow: var(--shadow);
   margin-top: 8px;
   padding: 12px;
   border-radius: 8px;
